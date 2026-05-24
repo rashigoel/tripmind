@@ -306,6 +306,24 @@ def agent_steps(
                         "Then emit SELF_CHECK, then FINAL_ANSWER."
                     ),
                 })
+            elif response.tool_name == "search_hotels":
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"TOOL_RESULT for search_hotels:\n"
+                        + json.dumps(tool_result, indent=2, ensure_ascii=False)
+                        + "\n\nYour NEXT response MUST be a REASONING_STEP "
+                        "with reasoning_type='assumption'. "
+                        "Justify EVERY argument you will pass to compute_budget:\n"
+                        "• accommodation_cost: ₹X/night × N nights = ₹Y "
+                        "(state whether from tool result or proxy tier chosen)\n"
+                        "• transport_cost: ₹Z (state mode, distance, rate assumed)\n"
+                        "• food_per_day: ₹W (state destination type and party size)\n"
+                        "• activities_budget: ₹V (sum from attractions results or assumed)\n"
+                        "• days: N (must match user request)\n"
+                        "After this REASONING_STEP(assumption), call compute_budget."
+                    ),
+                })
             else:
                 messages.append({
                     "role": "user",
