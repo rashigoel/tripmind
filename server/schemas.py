@@ -1,21 +1,36 @@
+# -*- coding: utf-8 -*-
 """
 Pydantic schemas for TripMind agent responses.
 
 Every LLM turn must produce exactly one of four validated types:
-  REASONING_STEP  — structured thinking before any action
-  FUNCTION_CALL   — tool invocation with typed arguments
-  SELF_CHECK      — verification of a prior claim
-  FINAL_ANSWER    — complete, validated trip plan
+  REASONING_STEP  - structured thinking before any action
+  FUNCTION_CALL   - tool invocation with typed arguments
+  SELF_CHECK      - verification of a prior claim
+  FINAL_ANSWER    - complete, validated trip plan
 """
 from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Schema A — REASONING_STEP
 # ─────────────────────────────────────────────────────────────────────────────
+
+_NEXT_ACTION_ALIASES: dict[str, str] = {
+    "TOOL_CA_LL":    "TOOL_CALL",
+    "TOOLCALL":      "TOOL_CALL",
+    "TOOL-CALL":     "TOOL_CALL",
+    "SELFCHECK":     "SELF_CHECK",
+    "SELF-CHECK":    "SELF_CHECK",
+    "REASONINGSTEP": "REASONING_STEP",
+    "REASON_STEP":   "REASONING_STEP",
+    "FINALANSWER":   "FINAL_ANSWER",
+    "FINAL_ANS":     "FINAL_ANSWER",
+    "FINAL":         "FINAL_ANSWER",
+}
+
 
 class ReasoningStep(BaseModel):
     type: Literal["REASONING_STEP"]
@@ -27,6 +42,13 @@ class ReasoningStep(BaseModel):
     ]
     thought: str = Field(default="", min_length=0)
     next_action: Literal["TOOL_CALL", "SELF_CHECK", "REASONING_STEP", "FINAL_ANSWER"] = "REASONING_STEP"
+
+    @field_validator("next_action", mode="before")
+    @classmethod
+    def normalise_next_action(cls, v: object) -> object:
+        if isinstance(v, str):
+            return _NEXT_ACTION_ALIASES.get(v, v)
+        return v
 
 
 # ─────────────────────────────────────────────────────────────────────────────
