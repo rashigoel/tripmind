@@ -25,7 +25,7 @@ class ReasoningStep(BaseModel):
         "arithmetic", "lookup", "constraint_check",
         "comparison", "validation", "synthesis",
     ]
-    thought: str = Field(min_length=20)
+    thought: str = Field(default="", min_length=0)
     next_action: Literal["TOOL_CALL", "SELF_CHECK", "REASONING_STEP", "FINAL_ANSWER"]
 
 
@@ -38,8 +38,8 @@ class FunctionCall(BaseModel):
     step_number: int = Field(ge=1)
     tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
-    why_this_tool: str = Field(min_length=10)
-    expected_output: str = Field(min_length=5)
+    why_this_tool: str = Field(default="", min_length=0)
+    expected_output: str = Field(default="", min_length=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ class SelfCheck(BaseModel):
         "assumption_review", "cross_validation", "accessibility_check",
     ]
     passed: bool
-    notes: str = Field(min_length=10)
+    notes: str = Field(default="", min_length=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

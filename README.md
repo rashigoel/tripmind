@@ -119,50 +119,50 @@ The agent **must** emit exactly one of four schema types per turn.
 
 ### Schema A — `ReasoningStep`
 
-Structured thinking step emitted before tool calls, after data gathering, and before the final answer.
+Emitted before every tool call, after every tool result, and before the final answer. The `reasoning_type` field steers the LLM toward the correct cognitive mode for each phase.
 
 ```python
 class ReasoningStep(BaseModel):
     type:           Literal["REASONING_STEP"]
     step_number:    int                          # ge=1
     reasoning_type: Literal[
-        "decomposition",   # break down the user request
-        "assumption",      # state what is being assumed and why
-        "analysis",        # interpret tool results; pick best options
-        "arithmetic",      # budget math / cost estimates step-by-step
-        "lookup",          # decide which tool to call and with what args
-        "constraint_check",# verify a rule (budget limit, day count, etc.)
-        "comparison",      # compare two or more options
-        "validation",      # verify a prior claim or plan detail
-        "synthesis",       # pull all findings into a coherent plan
+        "decomposition",    # break down the user request into sub-problems
+        "assumption",       # state what is being assumed and why
+        "analysis",         # interpret tool results; pick best options
+        "arithmetic",       # budget math / cost estimates step-by-step
+        "lookup",           # interpret a single tool result; decide next tool
+        "constraint_check", # verify a rule (budget limit, day count, etc.)
+        "comparison",       # compare two or more options
+        "validation",       # verify a prior claim or plan detail
+        "synthesis",        # pull all findings into a coherent plan
     ]
-    thought:        str                          # min_length=20
+    thought:        str = ""                     # free-form reasoning text
     next_action:    Literal["TOOL_CALL", "SELF_CHECK", "REASONING_STEP", "FINAL_ANSWER"]
 ```
 
 ### Schema B — `FunctionCall`
 
-Tool invocation with typed arguments. Dispatched to `mcp_tools.dispatch_tool()`.
+Tool invocation with typed arguments. Dispatched to `mcp_tools.dispatch_tool()`. Metadata fields are optional — only `tool_name` and `arguments` are required for dispatch.
 
 ```python
 class FunctionCall(BaseModel):
-    type:           Literal["FUNCTION_CALL"]
-    step_number:    int
-    tool_name:      str
-    arguments:      dict[str, Any]               # forwarded as **kwargs to tool fn
-    why_this_tool:  str                          # min_length=10
-    expected_output: str                         # min_length=5
+    type:            Literal["FUNCTION_CALL"]
+    step_number:     int
+    tool_name:       str                         # must match a key in TOOL_MAP
+    arguments:       dict[str, Any]              # forwarded as **kwargs to tool fn
+    why_this_tool:   str = ""                    # optional — rationale for this call
+    expected_output: str = ""                    # optional — what the agent expects back
 ```
 
 ### Schema C — `SelfCheck`
 
-Mandatory validation gate before the final answer. Runs cross-validation on cost math, day coverage, and constraint compliance.
+Mandatory validation gate before `FINAL_ANSWER`. If `passed=false`, the orchestrator requires a corrective `REASONING_STEP` before proceeding.
 
 ```python
 class SelfCheck(BaseModel):
     type:                  Literal["SELF_CHECK"]
     step_number:           int
-    claim_being_checked:   str                   # min_length=10
+    claim_being_checked:   str                   # specific claim being verified
     verification_method:   Literal[
         "constraint_review",
         "order_of_magnitude",
@@ -171,7 +171,7 @@ class SelfCheck(BaseModel):
         "accessibility_check",
     ]
     passed:  bool
-    notes:   str                                 # min_length=10
+    notes:   str = ""                            # finding — what passed or failed
 ```
 
 ### Schema D — `FinalAnswer`
@@ -247,30 +247,55 @@ def parse_llm_response(data: dict) -> LLMResponse:
 
 ## Agent Reasoning Sequence
 
+The orchestrator enforces two rules:
+1. **Post-tool gate** — a `REASONING_STEP` must follow every tool result before the next tool can be called.
+2. **Pre-final guard** — `FINAL_ANSWER` is blocked until both a post-gather `analysis` step and a `SELF_CHECK` have been emitted.
+
 ```
 Phase 1 — UNDERSTAND
-  Step 1   REASONING_STEP  (decomposition)
-           Identify: destination · party · budget · days · origin · accessibility
+  #1   🧠 REASONING_STEP  decomposition
+       Identify: destination · party · budget · days · origin · accessibility
 
-Phase 2 — GATHER DATA
-  Step 2   FUNCTION_CALL   resolve_location
-  Step 3   FUNCTION_CALL   get_weather
-  Step 4   FUNCTION_CALL   search_attractions
-  Step 5   FUNCTION_CALL   get_local_cuisine
-  Step 6   FUNCTION_CALL   search_hotels
-  Step 7   FUNCTION_CALL   compute_budget
-  (opt.)   FUNCTION_CALL   get_route / search_restaurants / get_destination_info
+Phase 2 — GATHER + INTERPRET  (interleaved tool calls and reasoning)
+  #2   ⚡ FUNCTION_CALL   resolve_location
+  #3   🧠 REASONING_STEP  lookup      "got lat/lon, proceeding to weather"
+  #4   ⚡ FUNCTION_CALL   get_weather
+  #5   🧠 REASONING_STEP  lookup      "June = SW monsoon; hill country safer"
+  #6   ⚡ FUNCTION_CALL   search_attractions
+  #7   🧠 REASONING_STEP  analysis    "top 3 adventure sites identified"
+  #8   ⚡ FUNCTION_CALL   get_local_cuisine
+  #9   🧠 REASONING_STEP  lookup      "hoppers, kottu, ambul thiyal noted"
+  #10  ⚡ FUNCTION_CALL   search_hotels
+  #11  🧠 REASONING_STEP  analysis    "Hotel X fits budget at ₹3k/night"
+  #12  ⚡ FUNCTION_CALL   compute_budget
+       ↳ orchestrator injects hard directive with 5 mandatory analysis questions
 
 Phase 3 — ANALYSE
-  Step 8   REASONING_STEP  (analysis)
-           Pick hotel · map attractions to days · weather check · draft structure
+  #13  🧠 REASONING_STEP  analysis    (full plan synthesis — all 5 questions answered)
 
 Phase 4 — VALIDATE
-  Step 9   SELF_CHECK       (cross_validation)
-           ✓ total ≤ budget  ✓ every day covered  ✓ no invented figures
+  #14  🔍 SELF_CHECK       cross_validation
+       ✓ total ≤ budget  ✓ every day covered  ✓ no invented figures  ✓ weather-safe
 
 Phase 5 — DELIVER
-  Step 10  FINAL_ANSWER
+  #15  ✈  FINAL_ANSWER
+```
+
+### Orchestrator Enforcement
+
+```python
+# After every tool result (non-budget):
+awaiting_post_tool_reason = True
+# → next FunctionCall is blocked with "emit REASONING_STEP first"
+# → cleared when any ReasoningStep is received
+
+# After compute_budget:
+# → hard directive injected: 5 mandatory analysis questions
+# → agent must answer all before proceeding
+
+# Before FinalAnswer is yielded:
+if not has_analysis or not has_self_check:
+    # → FINAL_ANSWER swallowed; agent told to emit missing steps first
 ```
 
 ---
@@ -358,9 +383,12 @@ tripmind/
 
 | Decision | Rationale |
 |----------|-----------|
-| Sync generator + asyncio.Queue | `httpx` LLM calls are blocking; bridging to async SSE avoids `asyncio.run_in_executor` complexity |
-| `json_repair` fallback | LLMs regularly emit unescaped newlines in long `thought` fields; strict `json.loads` would fail 20–30% of deep-reasoning steps |
-| Pydantic `model_validator` on `CostBreakdown` | Catches hallucinated totals at parse time, before the UI renders bad data |
-| `reasoning_type` taxonomy | Enables the UI to render distinct badges per step type; also steers the LLM toward the correct cognitive mode per phase |
-| Indian city alias map | Open-Meteo geocoding returns Pakistani results for "Bangalore", Japanese results for "Cochin" etc. — 50+ aliases with forced `country_code=IN` filter fix this |
-| `max_tokens=8192` | `FINAL_ANSWER` for a 3-day plan with full itinerary is ~2,000–3,500 tokens; 4096 caused mid-JSON truncation |
+| Sync generator + asyncio.Queue | `httpx` LLM calls are blocking; bridging to async SSE avoids `run_in_executor` complexity while keeping clean cancellation via `threading.Event` |
+| `json_repair` fallback | LLMs emit unescaped newlines in long `thought` fields; strict `json.loads` fails ~20–30% of deep-reasoning steps — `json_repair` fixes silently |
+| Pydantic `model_validator` on `CostBreakdown` | Catches hallucinated totals at parse time before the UI renders bad budget data |
+| `reasoning_type` 9-value taxonomy | Each value maps to a distinct badge in the UI drawer; steers the LLM to the right cognitive mode (e.g. `arithmetic` for budget math, `lookup` for post-tool interpretation) |
+| Two-layer reasoning enforcement | **Directive** (tool result message tells LLM what to do next) + **Gate** (orchestrator blocks next tool call if `awaiting_post_tool_reason=True`) — directive alone is ignored ~40% of the time |
+| Post-`compute_budget` hard directive | After the last data tool, 5 specific questions are injected; the LLM cannot write a vague analysis — it must answer each question in the `thought` field |
+| Optional metadata fields on `FunctionCall` / `SelfCheck` | LLMs omit `why_this_tool`, `notes` etc. on complex multi-country queries; making them optional prevents schema validation failures that would consume retry budget |
+| Indian city alias map | Open-Meteo returns Pakistan for "Bangalore" and Japan for "Cochin"; 50+ aliases + forced `country_code=IN` filter fix all known collisions |
+| `max_tokens=8192` | `FINAL_ANSWER` for a 3-day itinerary is ~2,000–3,500 tokens; 4096 caused mid-JSON truncation and parse failures |

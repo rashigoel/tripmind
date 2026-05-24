@@ -29,7 +29,7 @@ _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from server.schemas import parse_llm_response, FunctionCall, FinalAnswer
+from server.schemas import parse_llm_response, FunctionCall, FinalAnswer, ReasoningStep, SelfCheck
 from mcp_tools import dispatch_tool
 from prompts.trip_planner import SYSTEM_PROMPT
 
@@ -189,7 +189,13 @@ def agent_steps(
     messages: list[dict] = list(history or [])
     messages.append({"role": "user", "content": user_query})
 
-    consecutive_errors = 0
+    consecutive_errors        = 0
+    tool_calls_made           = 0      # total successful tool dispatches
+    has_analysis              = False  # REASONING_STEP(analysis/synthesis/…) after tools
+    has_self_check            = False  # any SELF_CHECK emitted
+    awaiting_post_tool_reason = False  # gate: must reason before next tool call
+
+    _ANALYSIS_TYPES = {"analysis", "synthesis", "arithmetic", "constraint_check", "lookup"}
 
     for _turn in range(max_steps):
 
@@ -243,33 +249,114 @@ def agent_steps(
 
         # ── 5. Handle response type ────────────────────────────────────────────
         if isinstance(response, FunctionCall):
-            # Dispatch the tool
+
+            # Gate: block tool call if a post-tool reasoning step is still owed
+            if awaiting_post_tool_reason:
+                messages.append({
+                    "role": "assistant",
+                    "content": json.dumps(response.model_dump(), ensure_ascii=False),
+                })
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "STOP — you must interpret the previous tool result before "
+                        "calling another tool. Emit a REASONING_STEP now "
+                        "(reasoning_type='lookup' or 'analysis') that explains what "
+                        "you learned from the last result and what you will do next."
+                    ),
+                })
+                continue
+
+            tool_calls_made += 1
             tool_result = dispatch_tool(response.tool_name, response.arguments)
             yield {
                 "event":     "tool_result",
                 "tool_name": response.tool_name,
                 "result":    tool_result,
             }
-            # Inject both the agent's request and the tool result into history
+            messages.append({
+                "role":    "assistant",
+                "content": json.dumps(response.model_dump(), ensure_ascii=False),
+            })
+            awaiting_post_tool_reason = True  # require reasoning before next tool
+
+            # After compute_budget (last data tool): hard directive to analyse
+            if response.tool_name == "compute_budget":
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"TOOL_RESULT for compute_budget:\n"
+                        + json.dumps(tool_result, indent=2, ensure_ascii=False)
+                        + "\n\n"
+                        "═══ DATA GATHERING COMPLETE ═══\n"
+                        "Your ONLY valid next response is a REASONING_STEP with "
+                        "reasoning_type='analysis'. DO NOT call more tools. "
+                        "DO NOT emit FINAL_ANSWER yet.\n\n"
+                        "In your thought, answer ALL of these:\n"
+                        "1. Which hotel best fits the budget and party size?\n"
+                        "2. Which attractions go on which day?\n"
+                        "3. Does weather affect any activity?\n"
+                        "4. Budget arithmetic: accommodation + transport + food "
+                        "+ activities + 15% buffer = total. Does it fit?\n"
+                        "5. Draft day-by-day titles and activity list.\n"
+                        "Then emit SELF_CHECK, then FINAL_ANSWER."
+                    ),
+                })
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"TOOL_RESULT for {response.tool_name}:\n"
+                        + json.dumps(tool_result, indent=2, ensure_ascii=False)
+                        + "\n\nYour NEXT response MUST be a REASONING_STEP "
+                        "(reasoning_type='lookup' or 'analysis') to interpret this "
+                        "result before calling any more tools. Explain what you found "
+                        "and what it means for the plan. "
+                        "REMINDER: after all tools, you MUST also emit "
+                        "REASONING_STEP (analysis) then SELF_CHECK before FINAL_ANSWER."
+                    ),
+                })
+
+        elif isinstance(response, FinalAnswer):
+            # Guard: block premature FINAL_ANSWER if analysis or self-check missing
+            missing = []
+            if tool_calls_made > 0 and not has_analysis:
+                missing.append("REASONING_STEP with reasoning_type='analysis'")
+            if tool_calls_made > 0 and not has_self_check:
+                missing.append("SELF_CHECK")
+            if missing:
+                messages.append({
+                    "role": "assistant",
+                    "content": json.dumps(response.model_dump(), ensure_ascii=False),
+                })
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "STOP — you skipped mandatory reasoning steps. "
+                        f"Before FINAL_ANSWER you must emit: {', '.join(missing)}. "
+                        "Emit the first missing step now, then continue the sequence."
+                    ),
+                })
+                continue  # loop again without yielding FINAL_ANSWER
+            yield {"event": "end", "reason": "final_answer"}
+            return
+
+        elif isinstance(response, SelfCheck):
+            has_self_check = True
             messages.append({
                 "role":    "assistant",
                 "content": json.dumps(response.model_dump(), ensure_ascii=False),
             })
             messages.append({
-                "role": "user",
-                "content": (
-                    f"TOOL_RESULT for {response.tool_name}:\n"
-                    + json.dumps(tool_result, indent=2, ensure_ascii=False)
-                    + "\n\nContinue reasoning with the next step."
-                ),
+                "role":    "user",
+                "content": _CONTINUE["SELF_CHECK"],
             })
 
-        elif isinstance(response, FinalAnswer):
-            yield {"event": "end", "reason": "final_answer"}
-            return
-
-        else:
-            # REASONING_STEP or SELF_CHECK — append and prompt to continue
+        else:  # REASONING_STEP
+            if isinstance(response, ReasoningStep):
+                awaiting_post_tool_reason = False   # satisfied the post-tool gate
+                if tool_calls_made > 0 and response.reasoning_type in _ANALYSIS_TYPES:
+                    has_analysis = True
             messages.append({
                 "role":    "assistant",
                 "content": json.dumps(response.model_dump(), ensure_ascii=False),
