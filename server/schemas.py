@@ -26,7 +26,7 @@ class ReasoningStep(BaseModel):
         "comparison", "validation", "synthesis",
     ]
     thought: str = Field(default="", min_length=0)
-    next_action: Literal["TOOL_CALL", "SELF_CHECK", "REASONING_STEP", "FINAL_ANSWER"]
+    next_action: Literal["TOOL_CALL", "SELF_CHECK", "REASONING_STEP", "FINAL_ANSWER"] = "REASONING_STEP"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,8 +134,28 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 
+_TYPE_ALIASES: dict[str, str] = {
+    # common LLM abbreviations / typos
+    "REASON/STEP":    "REASONING_STEP",
+    "REASONING":      "REASONING_STEP",
+    "REASON_STEP":    "REASONING_STEP",
+    "REASONINGSTEP":  "REASONING_STEP",
+    "FUNCTION":       "FUNCTION_CALL",
+    "FUNC_CALL":      "FUNCTION_CALL",
+    "TOOL_CALL":      "FUNCTION_CALL",
+    "SELF_CHECK":     "SELF_CHECK",
+    "SELFCHECK":      "SELF_CHECK",
+    "FINAL":          "FINAL_ANSWER",
+    "FINALANSWER":    "FINAL_ANSWER",
+    "FINAL_ANS":      "FINAL_ANSWER",
+}
+
+
 def parse_llm_response(data: dict) -> LLMResponse:
-    t = data.get("type")
+    t = data.get("type", "")
+    # normalise common abbreviations before looking up
+    t = _TYPE_ALIASES.get(t, t)
+    data = {**data, "type": t}
     cls = _TYPE_MAP.get(t)
     if cls is None:
         raise ValueError(f"Unknown response type: {t!r}. Must be one of: {list(_TYPE_MAP)}")
