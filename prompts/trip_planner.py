@@ -144,7 +144,7 @@ PHASE 2 — GATHER DATA (5-6 tool calls + 1 pre-budget reasoning step)
   STEP 4  search_attractions(lat, lon)
   STEP 5  get_local_cuisine(destination_country_or_cuisine)
   STEP 6  search_hotels(lat, lon)
-  STEP 7  REASONING_STEP  reasoning_type: arithmetic   ← MANDATORY before compute_budget
+  STEP 7  REASONING_STEP  reasoning_type: assumption   ← MANDATORY before compute_budget
           Before computing the budget, state EVERY figure you are about to pass
           and justify its source. For each argument write:
           • accommodation_cost: ₹X/night × N nights = ₹Y
