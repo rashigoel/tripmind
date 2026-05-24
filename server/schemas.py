@@ -94,8 +94,8 @@ class Activity(BaseModel):
 
 
 class Meal(BaseModel):
-    meal_type: Literal["Breakfast", "Lunch", "Dinner"]   # renamed from "meal" to avoid LLM confusion
-    suggestion: str
+    meal_type: Literal["Breakfast", "Lunch", "Dinner"] = "Breakfast"
+    suggestion: str = ""
     cuisine: Optional[str] = None
     est_cost_inr: int = Field(default=0, ge=0)
 
@@ -133,7 +133,7 @@ class FinalAnswer(BaseModel):
     confidence: Literal["high", "medium", "low"]
     weather_summary: str
     itinerary: list[ItineraryDay] = Field(default_factory=list)
-    cost_breakdown: CostBreakdown
+    cost_breakdown: Optional[CostBreakdown] = None
     key_assumptions: list[str] = Field(default_factory=list)
     travel_tips: list[str] = Field(default_factory=list)
     local_cuisine_highlights: list[str] = Field(default_factory=list)
