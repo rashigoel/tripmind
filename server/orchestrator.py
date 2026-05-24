@@ -296,9 +296,13 @@ def agent_steps(
                         "1. Which hotel best fits the budget and party size?\n"
                         "2. Which attractions go on which day?\n"
                         "3. Does weather affect any activity?\n"
-                        "4. Budget arithmetic: accommodation + transport + food "
+                        "4. Confirm the cost assumptions from your pre-budget "
+                        "reasoning step: were the figures (accommodation proxy, "
+                        "transport estimate, food rate) reasonable given the "
+                        "compute_budget result? Flag any that look off.\n"
+                        "5. Budget arithmetic: accommodation + transport + food "
                         "+ activities + 15% buffer = total. Does it fit?\n"
-                        "5. Draft day-by-day titles and activity list.\n"
+                        "6. Draft day-by-day titles and activity list.\n"
                         "Then emit SELF_CHECK, then FINAL_ANSWER."
                     ),
                 })

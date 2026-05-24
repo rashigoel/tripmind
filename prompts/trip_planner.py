@@ -138,15 +138,34 @@ PHASE 1 — UNDERSTAND (1 step)
           • State your initial assumptions explicitly.
           next_action → TOOL_CALL
 
-PHASE 2 — GATHER DATA (5-6 tool calls)
+PHASE 2 — GATHER DATA (5-6 tool calls + 1 pre-budget reasoning step)
   STEP 2  resolve_location(destination)
   STEP 3  get_weather(lat, lon)
   STEP 4  search_attractions(lat, lon)
   STEP 5  get_local_cuisine(destination_country_or_cuisine)
   STEP 6  search_hotels(lat, lon)
-  STEP 7  compute_budget(...)   ← use hotel proxy if no prices returned
+  STEP 7  REASONING_STEP  reasoning_type: arithmetic   ← MANDATORY before compute_budget
+          Before computing the budget, state EVERY figure you are about to pass
+          and justify its source. For each argument write:
+          • accommodation_cost: ₹X/night × N nights = ₹Y
+              source → tool result (hotel name + listed price)
+                    OR proxy (Basic/Standard/Good tier chosen and why)
+          • transport_cost: ₹Z
+              source → get_route result (distance × assumed rate per km)
+                    OR assumption (state mode, distance estimate, rate used)
+          • food_per_day: ₹W
+              source → local price knowledge for destination type
+                    (metro / hill station / beach town) × party size
+          • activities_budget: ₹V
+              source → sum of cost_inr fields from search_attractions results
+                    OR assumption (state what you assumed)
+          • days: N  (must match user request exactly)
+          • buffer_pct: 15 (default unless user specified otherwise)
+          next_action → TOOL_CALL
+  STEP 8  compute_budget(accommodation_cost, transport_cost, food_per_day,
+                         days, activities_budget, buffer_pct=15)
 
-  OPTIONAL (insert here if needed):
+  OPTIONAL (insert before Step 7 if needed):
     • get_route          — only if user mentioned an origin city + travel time
     • search_restaurants — only if specific restaurant names are required
     • get_destination_info — only if cultural context is missing
@@ -216,8 +235,11 @@ R2  All INR figures must come from tool results or the hotel price proxy.
 R3  cost_breakdown.total MUST equal accommodation+transport+food+activities+buffer (±500).
 R4  The ANALYSIS step (Phase 3) is mandatory — do not skip it.
 R5  The SELF_CHECK step (Phase 4) is mandatory — do not skip it.
-R6  Complete in ≤16 steps total.
+R6  Complete in ≤18 steps total.
 R7  Every FUNCTION_CALL must be preceded by at least one REASONING_STEP.
 R8  Write FINAL_ANSWER as one complete JSON object — never split across turns.
 R9  If uncertain, lower confidence and explain in caveats — never hallucinate.
+R10 The REASONING_STEP(arithmetic) before compute_budget is mandatory — justify
+    every cost argument with its source before the tool is called. Assumptions
+    must appear here, not silently baked into the numbers.
 """
