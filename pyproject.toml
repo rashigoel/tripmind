@@ -1,0 +1,18 @@
+[project]
+name = "tripmind"
+version = "2.0.0"
+description = "TripMind — AI Trip Planner with real MCP tools and structured reasoning"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "pydantic>=2.7",
+    "amadeus>=9.0",
+    "mcp>=1.0",
+    "json-repair>=0.59.10",
+]
+
+[tool.uv]
+package = false
